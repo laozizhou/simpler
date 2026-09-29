@@ -653,6 +653,9 @@ endpoint 发布完成**早于**发布它的 lane 状态，所以完成唤醒可�
 
 ## 7. 新增一个调度器该怎么做
 
+> 仓库里已有一个按「方案 1」落地的完整参考：**topo_queue**（AICore 自取 + 每任务完成 counter），
+> 从设计、实现到仿真验证与真机测试计划见 [topo_queue.md](topo_queue.md)。
+
 ### 方案 1 —— 新建一个 runtime（影响面最大，边界最干净）
 
 建 `src/<arch>/runtime/<new_name>/` 并放一个 `build_config.py`。

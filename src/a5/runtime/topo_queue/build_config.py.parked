@@ -1,0 +1,50 @@
+# Copyright (c) PyPTO Contributors.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# -----------------------------------------------------------------------------------------------------------
+# topo_queue runtime build configuration.
+#
+# The scheduling scheme lives in runtime/ (self-pulling AICore workers over a
+# sorted task table) and replaces host_build_graph's scheduler/ wholesale. The
+# graph, however, is deliberately NOT rebuilt: the host and orchestration
+# targets compile host_build_graph's own sources, so graph construction,
+# dependency derivation and upload are byte-identical to HBG's and topo_queue
+# only differs on the device. That is a deliberate coupling — HBG's host side
+# and the graph wire format (scheduler_graph.h) are the contract this runtime
+# reads; a change there reaches topo_queue at the next build, loudly.
+#
+# Only aicpu/ and aicore/ are this runtime's own code.
+HBG = "../host_build_graph"
+SHARED = "../../../common/host_build_graph"
+
+BUILD_CONFIG = {
+    "aicore": {
+        "include_dirs": ["runtime", f"{HBG}/runtime", f"{HBG}/common", "..", SHARED],
+        "source_dirs": ["aicore"],
+    },
+    "aicpu": {
+        "include_dirs": ["runtime", f"{HBG}/runtime", f"{HBG}/aicpu", f"{HBG}/common", "..", SHARED],
+        "source_dirs": [
+            "aicpu",
+            f"{SHARED}/device",
+            f"{SHARED}/shared",
+        ],
+    },
+    "host": {
+        "include_dirs": [f"{HBG}/runtime", f"{HBG}/common", "..", SHARED],
+        "source_dirs": [
+            f"{HBG}/host",
+            f"{HBG}/orchestration",
+            f"{SHARED}/host",
+            f"{SHARED}/shared",
+        ],
+    },
+    "orchestration": {
+        "include_dirs": [f"{HBG}/runtime", f"{HBG}/orchestration", f"{HBG}/common", "..", SHARED],
+        "source_dirs": [f"{HBG}/orchestration"],
+    },
+}

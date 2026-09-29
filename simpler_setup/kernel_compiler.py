@@ -226,8 +226,14 @@ class KernelCompiler:
         else:
             arch = "a2a3"
 
-        runtime_dir = str(self.project_root / "src" / arch / "runtime" / runtime_name / "runtime")
-        runtime_common_dir = str(self.project_root / "src" / arch / "runtime" / runtime_name / "common")
+        # topo_queue borrows host_build_graph's whole kernel/orchestration
+        # include contract (tensor.h, orchestration_api.h, ...): its examples
+        # are written against the hbg API and its build_config compiles HBG's
+        # orchestration sources verbatim, so the headers must be HBG's too.
+        contract = "host_build_graph" if runtime_name == "topo_queue" else runtime_name
+
+        runtime_dir = str(self.project_root / "src" / arch / "runtime" / contract / "runtime")
+        runtime_common_dir = str(self.project_root / "src" / arch / "runtime" / contract / "common")
         common_dir = str(self.project_root / "src" / "common" / "task_interface")
         src_common_dir = str(self.project_root / "src" / "common")
         return [runtime_dir, runtime_common_dir, common_dir, src_common_dir] + self.get_platform_include_dirs()
@@ -385,7 +391,11 @@ class KernelCompiler:
         )
 
     def _orchestration_toolchain(self, runtime_name: str) -> Union[GxxToolchain, Aarch64GxxToolchain]:
-        if runtime_name == "host_build_graph":
+        # topo_queue's orchestration target IS host_build_graph's (its
+        # build_config points source_dirs at HBG's orchestration/), so it
+        # compiles host-side for the same reason HBG does: the graph is built on
+        # the host before launch.
+        if runtime_name in ("host_build_graph", "topo_queue"):
             return self.host_gxx
         if runtime_name == "tensormap_and_ringbuffer":
             if self.platform.endswith("sim"):
