@@ -118,7 +118,7 @@ header(128B, 偏移表+magic+version) → order[] → fanin CSR → entries[](id
 比 AICPU 调度的 legacy 1.168 µs 还慢）。核利用率 6.8% vs resident 53.3%。瓶颈是单队头：认领严格串行、
 间隔恒定 3.07 µs，且随轮询该队头的核数变化（27 个空闲 AIC 核时 3.564 µs，62.5 个空闲 AIV 核时 2.580 µs），
 是对一条 cache line 的争抢。两次减少轮询流量的尝试从相反方向各让它慢了 18% 和 23%。
-完整数据、四种 DAG 形状的对照与机制分析见 [scheduler-benchmark.md](scheduler-benchmark.md)。
+完整数据、四种 DAG 形状的对照与机制分析见 [topo_queue_experiments.md](topo_queue_experiments.md)。
 
 ### sim 证明了 / 证明不了
 
