@@ -109,10 +109,16 @@ header(128B, 偏移表+magic+version) → order[] → fanin CSR → entries[](id
 
 **回归**：动过的共享文件（kernel_compiler 两处映射）后，HBG bgemm / TMR vector_example / 全仓库 UT 259/259 均绿。
 
-### sim 性能对比（仅作健全性信号，禁止外推）
+### sim 性能对比（结论已被真机推翻）
 
-同负载 bgemm 500 任务 device_wall：HBG resident ~2.6–2.7s（2 样本）；topo_queue **0.86–0.90s**（7 样本，稳定）。
+同负载 bgemm 500 任务 device_wall：HBG resident ~2.6–2.7s（2 样本）；topo_queue **0.86–0.90s**（7 样本，稳定）——看起来快约 3 倍。
 **不可外推到硅片**：sim 里 dcci=全内存栅栏（重罚 HBG 的密集 observe）、无真实 GM 延迟（轻放 topo_queue 的轮询）、24 线程超订在 ~10 host 核上、24 核规模压不出 108 核的队头争抢与 HOL。
+
+**2026-09-30 真机实测：相对关系完全翻转，topo_queue 慢 5.9 倍**（每任务 3.184 µs vs resident 0.538 µs，
+比 AICPU 调度的 legacy 1.168 µs 还慢）。核利用率 6.8% vs resident 53.3%。瓶颈是单队头：认领严格串行、
+间隔恒定 3.07 µs，且随轮询该队头的核数变化（27 个空闲 AIC 核时 3.564 µs，62.5 个空闲 AIV 核时 2.580 µs），
+是对一条 cache line 的争抢。两次减少轮询流量的尝试从相反方向各让它慢了 18% 和 23%。
+完整数据与机制见 [docs/investigations/2026-09-topo-queue-single-queue-head.md](../investigations/2026-09-topo-queue-single-queue-head.md)。
 
 ### sim 证明了 / 证明不了
 
@@ -120,7 +126,7 @@ header(128B, 偏移表+magic+version) → order[] → fanin CSR → entries[](id
 | --- | --- |
 | 调度逻辑正确（依赖序、恰好一次、golden 一致） | 内存序（sim cache 是空模型，`SINGLE_CACHE_LINE==0`） |
 | 协议完备（握手咬合、无挂死、干净收尾） | 地址空间（`__gm__` 在 sim 为空宏，未过 ccec） |
-| 工程可运行（真实管线、三家共存、host 复用） | 硅片性能、108 核规模行为、HOL 实际代价 |
+| 工程可运行（真实管线、三家共存、host 复用） | 硅片性能、108 核规模行为、HOL 实际代价 —— 这一栏已在 2026-09-30 补测，见上 |
 
 备注：TSan 直查真 .so 在 macOS 上不可行（gcc-15 无 arm64 libtsan；tsan dylib 被系统策略拒载入未插桩 python），
 未做；真机前非必需。UT 层 TSan（测试替身路径）已由压测覆盖、无竞争报告。
