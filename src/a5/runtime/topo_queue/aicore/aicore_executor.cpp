@@ -110,7 +110,10 @@ execute_task(const TopoImageView &image, TOPO_GM const TaskEntry &entry) {
 struct TaskRunner {
     const TopoImageView &image;
     DevicePlatform &plat;
-    uint32_t core_id;
+    // The dense worker index, not the physical core id: the host's swimlane
+    // metadata lists core types in that order, so a physical id lands on the
+    // wrong type -- or past the end of the list.
+    uint32_t worker_index;
 
     /*
      * The worker loop calls this once its predecessor wait has finished, so the
@@ -136,9 +139,9 @@ struct TaskRunner {
         __gm__ SchedulerTaskTrace *trace =
             reinterpret_cast<__gm__ SchedulerTaskTrace *>(image.header->trace_cells_address) + entry.task_id;
         trace->task_id = entry.task_id;
-        trace->worker_id = core_id;
-        trace->dispatch_scheduler_worker_id = core_id;
-        trace->complete_scheduler_worker_id = core_id;
+        trace->worker_id = worker_index;
+        trace->dispatch_scheduler_worker_id = worker_index;
+        trace->complete_scheduler_worker_id = worker_index;
         trace->dispatch_start_cycles = plat.claim_cycles;
         trace->dispatch_end_cycles = plat.claim_cycles;
         trace->ready_observe_cycles = plat.claim_cycles;
@@ -262,7 +265,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     const uint32_t retired = worker_loop(
         plat, image.queue_head, image.run_control, image.order, image.header->task_count, self_core_type,
         image.counters, image.fanin_offsets, image.fanin_ids, image.entries,
-        TaskRunner{image, plat, static_cast<uint32_t>(get_physical_core_id())}
+        TaskRunner{image, plat, static_cast<uint32_t>(block_idx)}
     );
 
     // Phase 4 -- publish this core's contribution in one add. Per-task increments
