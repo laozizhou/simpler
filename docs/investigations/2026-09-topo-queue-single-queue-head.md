@@ -1,10 +1,13 @@
 # topo_queue's one global queue head caps dispatch at ~1 task per 3 µs
 
 **Date**: 2026-09-30
-**Verdict**: the scheme is dropped in this shape — a single CAS head is 5.9×
-slower per task than `host_build_graph`'s resident scheduler on a5 silicon, and
-the cost is contention for one cache line, not anything the kernels do. Worth
-re-opening only with more heads (see *When to reconsider*).
+**Verdict**: the single CAS head costs a fixed ~3.8 µs per task on a5 silicon,
+which is contention for one cache line rather than anything the kernels do.
+Whether that loses depends entirely on how much dispatch throughput the graph
+demands: on 4096 independent tasks it is **23× slower** than `host_build_graph`'s
+resident scheduler, on bgemm 5.9×, and on a 1024-long serial chain it is the
+**fastest of the three**. Dropped as a general replacement; see *When to
+reconsider* for where it is the right shape.
 
 ## Question
 
@@ -117,12 +120,47 @@ reports 0% overhead for it, which is not a compliment — that metric measures t
 gap between *ready* and *dispatched*, and a pull scheduler claims before
 readiness, so the gap is negative and invisible. The metric is push-shaped.
 
+### Four DAG shapes, added after the bgemm run
+
+bgemm is one shape — wide, shallow, strictly type-alternating — and reading a
+general verdict off it was wrong. `tests/st/a5/{host_build_graph,topo_queue}/multi_core_dag`
+carry four shapes over trivial kernels (`check_stress.cpp` verifies state and
+barely computes), so these numbers are close to pure scheduling cost. 30 rounds
+each, `device_wall` trimmed mean, µs:
+
+| shape | resident | legacy | topo_queue | fastest |
+| --- | ---: | ---: | ---: | --- |
+| `mixed_chain_1024` (chain, width 1) | 6518.1 | 5559.1 | **5155.1** | topo_queue |
+| `mixed_fanin32_1024` (992 tasks × fanin 32) | 7599.7 | **1172.9** | 4571.7 | legacy |
+| `mixed_random_1024` | **800.2** | 1437.6 | 4619.7 | resident |
+| `mixed_multi_root_4096` (no dependencies at all) | **657.2** | 3821.6 | 15431.5 | resident |
+
+Three things fall out of it.
+
+**A serial chain is where pulling wins.** With width 1 there is no dispatch
+throughput to demand, and the cost that remains is the latency from a producer
+publishing to its consumer starting. A pulling core already holds the task and
+is spinning on that counter, so it starts immediately; a pushing scheduler has
+to observe the completion, dispatch, and have the core pick it up. topo_queue is
+21% faster than resident here.
+
+**4096 independent tasks isolate the ceiling.** No task waits for anything, so
+the whole run is dispatch: 0.160 µs/task (resident), 0.933 (legacy), **3.767
+(topo_queue)**. That last figure is the 3.07 µs claim interval measured on bgemm
+plus bring-up — the same constant, now with nothing else in front of it.
+
+**resident has a wide-fanin pathology of its own.** On `mixed_fanin32_1024` it is
+the *slowest* of the three and 6.5× behind legacy, with visible round-to-round
+spread (6130–10167 µs against legacy's 861–1589). 992 consumers all name the
+same 32 producers, so they all register on the same latest-submitted producer's
+wake list and are reclassified in one burst when it completes. This is a
+`host_build_graph` finding, not a topo_queue one, and it is not chased here.
+
 ## Why not (now)
 
 One CAS head is a hard throughput ceiling of about one task per 3 µs, and it
-does not move with the amount of available work: bgemm's 500 GEMM tasks have no
-predecessors at all and still come out one every ~3 µs, because the head cannot
-be skipped — skipping is what the deadlock-freedom argument in `topo_worker.h`
+does not move with the amount of available work: 4096 tasks with no dependencies
+at all still come out one every 3.8 µs, because the head cannot be skipped — skipping is what the deadlock-freedom argument in `topo_worker.h`
 forbids, since a consumed index nobody executes strands every consumer of that
 task.
 
@@ -145,6 +183,10 @@ is hidden by parallelism; with a tight core budget it would not be.
   structure.
 - **A workload that binds once and replays many times**, where `device_wall` is
   the end-to-end number rather than 4% of it.
+- **A dependency-bound graph rather than a dispatch-bound one.** The chain result
+  says the pull model is not slow in itself — it is slow at handing out work. A
+  workload whose critical path is long and whose width is small pays little for
+  the head and collects the lower producer-to-consumer latency.
 - Not on the strength of a simulation result. Sim's `dcci` is a full memory
   fence, it has no GM latency, and 24 threads oversubscribed on ~10 host cores
   cannot produce 96-core head contention — it reported this scheme 3× *faster*
