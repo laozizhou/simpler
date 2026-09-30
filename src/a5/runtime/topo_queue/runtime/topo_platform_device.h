@@ -54,11 +54,28 @@ namespace simpler::topo_queue {
  */
 inline constexpr uint64_t WAIT_TIMEOUT_SECONDS = 10;
 
+/*
+ * How many passes a core may answer the error poll from its own copy before it
+ * goes back to GM for a fresh one.
+ *
+ * The line is read by every core on every pass and written at most once in a
+ * run, so polling it at full rate spends device-wide coherency traffic on a
+ * value that almost never changes. Sampling bounds the staleness instead of
+ * removing it: a doomed core notices at most this many passes late, and those
+ * passes are microseconds.
+ */
+inline constexpr uint32_t ERROR_POLL_SAMPLE_PASSES = 64;
+
 struct DevicePlatform {
     uint64_t timeout_cycles;
+    // Last value read from the latch, and the passes left before re-reading it.
+    // A latched code is never cleared within a run, so a cached non-OK value
+    // stays correct for as long as this core lives.
+    uint64_t error_seen;
+    uint32_t error_poll_countdown;
 
     explicit __aicore__ DevicePlatform(uint64_t sys_cnt_freq) :
-        timeout_cycles(sys_cnt_freq * WAIT_TIMEOUT_SECONDS) {}
+        timeout_cycles(sys_cnt_freq * WAIT_TIMEOUT_SECONDS), error_seen(TOPO_OK), error_poll_countdown(0) {}
 
     /*
      * Peek the head index. Owes: nothing. ld_dev reads GM directly and a stale
@@ -149,16 +166,26 @@ struct DevicePlatform {
      * published metadata is the same (scheduler_memory.h: "publication-
      * protected metadata is invalidated separately before consumption").
      *
-     * The cost is one line invalidation per spin pass on a line that is
-     * read-mostly and written at most once per run, which is the wrong shape
-     * for the traffic it generates across a full device. If that ever shows up
-     * in a profile, the fix is to sample it -- invalidate every Nth pass rather
-     * than every pass -- not to drop the invalidation, since bounded staleness
-     * is the property worth keeping.
+     * It is sampled rather than read every pass, because an invalidate per pass
+     * on a read-mostly line is the wrong shape for the traffic it generates
+     * across a full device. Bounded staleness is the property worth keeping,
+     * and it is what sampling preserves: the latch is still observed, just
+     * every ERROR_POLL_SAMPLE_PASSES passes rather than all of them. Dropping
+     * the invalidation instead would leave a core free to answer from a line it
+     * has held since before the error was latched, for as long as it keeps
+     * spinning -- the early exit would then fire only by luck, and the
+     * observable failure would be a TOPO_ERR_WAIT_TIMEOUT that hides the real
+     * cause.
      */
     __aicore__ uint64_t load_error_relaxed(TOPO_GM const RunControl *control) {
+        if (error_poll_countdown != 0) {
+            --error_poll_countdown;
+            return error_seen;
+        }
+        error_poll_countdown = ERROR_POLL_SAMPLE_PASSES;
         topo_observe_cache_line(const_cast<TOPO_GM RunControl *>(control));
-        return topo_gm_query(const_cast<TOPO_GM RunControl *>(control)->error);
+        error_seen = topo_gm_query(const_cast<TOPO_GM RunControl *>(control)->error);
+        return error_seen;
     }
 
     /*
