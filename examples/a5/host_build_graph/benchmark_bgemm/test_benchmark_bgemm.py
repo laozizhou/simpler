@@ -46,6 +46,10 @@ class TestBenchmarkBgemmHostBuildGraph(SceneTestCase):
         ],
     }
 
+    # Scale0..Scale3 vary only the task count, so a sweep over them separates a
+    # per-task cost that is paid in series from one the cores absorb in
+    # parallel. They are manual on every platform: the sweep is a measurement,
+    # not a correctness case, and Case0 already covers the shape.
     CASES = [
         {
             "name": "Case0",
@@ -53,6 +57,20 @@ class TestBenchmarkBgemmHostBuildGraph(SceneTestCase):
             "manual": ["a5sim"],
             "params": {"matmul_add_task_num": 500, "incore_data_size": 128, "incore_loop": 4, "grid_k": 2},
         },
+        *(
+            {
+                "name": f"Scale{i}",
+                "platforms": ["a5sim", "a5"],
+                "manual": ["a5sim", "a5"],
+                "params": {
+                    "matmul_add_task_num": n,
+                    "incore_data_size": 128,
+                    "incore_loop": 4,
+                    "grid_k": 2,
+                },
+            }
+            for i, n in enumerate((100, 250, 1000, 2000))
+        ),
     ]
 
     def generate_args(self, params):
