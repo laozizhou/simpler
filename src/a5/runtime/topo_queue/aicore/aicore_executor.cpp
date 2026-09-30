@@ -97,6 +97,21 @@ execute_task(const TopoImageView &image, TOPO_GM const TaskEntry &entry) {
     return true;
 }
 
+/*
+ * The Execute policy worker_loop calls once per claimed task.
+ *
+ * It is a named type rather than a lambda because a lambda's operator() is a
+ * host function here: the AICore compiler accepts no annotation on a lambda
+ * that would make it a device one, so the call to execute_task would not
+ * compile. The host unit tests drive the same loop with their own callables,
+ * which the template parameter keeps free to be anything.
+ */
+struct TaskRunner {
+    const TopoImageView &image;
+
+    __aicore__ bool operator()(TOPO_GM const TaskEntry &entry) const { return execute_task(image, entry); }
+};
+
 }  // namespace
 
 /*
@@ -205,7 +220,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     const uint32_t retired = worker_loop(
         plat, image.queue_head, image.run_control, image.order, image.header->task_count, self_core_type,
         image.counters, image.fanin_offsets, image.fanin_ids, image.entries,
-        [&] __aicore__(TOPO_GM const TaskEntry &entry) { return execute_task(image, entry); }
+        TaskRunner{image}
     );
 
     // Phase 4 -- publish this core's contribution in one add. Per-task increments
