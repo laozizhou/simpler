@@ -178,6 +178,12 @@ def _hbg_task_display(task_id):
 
 HBG_RUNTIME = "host_build_graph"
 TMR_RUNTIME = "tensormap_and_ringbuffer"
+# topo_queue schedules host_build_graph's own graph image, so a task id in its
+# records IS an hbg task id and decodes with hbg's layout. The name is listed
+# separately rather than folded into HBG_RUNTIME because it is the runtime that
+# minted the document, which the reports name.
+TOPO_QUEUE_RUNTIME = "topo_queue"
+_HBG_ID_LAYOUT_RUNTIMES = (HBG_RUNTIME, TOPO_QUEUE_RUNTIME)
 
 
 def resolve_runtime(runtime_name, *, source="metadata.runtime"):
@@ -202,7 +208,7 @@ def resolve_runtime(runtime_name, *, source="metadata.runtime"):
     Raises:
         ValueError: the name is absent, blank, or not a runtime this tool decodes.
     """
-    if runtime_name in (HBG_RUNTIME, TMR_RUNTIME):
+    if runtime_name in (*_HBG_ID_LAYOUT_RUNTIMES, TMR_RUNTIME):
         return runtime_name
     if runtime_name is None or (isinstance(runtime_name, str) and not runtime_name.strip()):
         raise ValueError(
@@ -222,7 +228,7 @@ def task_display_for(runtime_name):
 
     See resolve_runtime for why an unknown name raises rather than defaulting.
     """
-    return _hbg_task_display if resolve_runtime(runtime_name) == HBG_RUNTIME else _tmr_task_display
+    return _hbg_task_display if resolve_runtime(runtime_name) in _HBG_ID_LAYOUT_RUNTIMES else _tmr_task_display
 
 
 def _task_id_fields_for(runtime_name):
@@ -230,7 +236,7 @@ def _task_id_fields_for(runtime_name):
 
     See resolve_runtime for why an unknown name raises rather than defaulting.
     """
-    return _hbg_task_id_fields if resolve_runtime(runtime_name) == HBG_RUNTIME else _tmr_task_id_fields
+    return _hbg_task_id_fields if resolve_runtime(runtime_name) in _HBG_ID_LAYOUT_RUNTIMES else _tmr_task_id_fields
 
 
 def _tmr_task_id_fields(task_id):
@@ -673,7 +679,7 @@ def _is_hbg_host_capture(raw):
     )
     if not has_host_capture:
         return False
-    return metadata.get("runtime") == HBG_RUNTIME
+    return metadata.get("runtime") in _HBG_ID_LAYOUT_RUNTIMES
 
 
 def _prepare_capture_clock_alignment(path, host_logs=None):
