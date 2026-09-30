@@ -6,11 +6,6 @@ slower per task than `host_build_graph`'s resident scheduler on a5 silicon, and
 the cost is contention for one cache line, not anything the kernels do. Worth
 re-opening only with more heads (see *When to reconsider*).
 
-> The same measurements as an interactive page, with the three swimlanes:
-> [2026-09-topo-queue-single-queue-head.html](2026-09-topo-queue-single-queue-head.html).
-> It renders on the published docs site; from a GitHub file view, download it and
-> open it locally, since GitHub serves repository HTML as source.
-
 ## Question
 
 `topo_queue` (branch `dev/clc-mpmc`) replaces `host_build_graph`'s device-side
