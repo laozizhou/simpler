@@ -22,6 +22,11 @@
  * a policy call rather than an #ifdef, so there is no path that only one of the
  * two ever compiles.
  *
+ * Both entry points carry `__aicore__` even though they are templates: the
+ * AICore compiler assigns an unannotated function to the host and refuses the
+ * call from the device-side executor. The macro is empty in a host build, where
+ * the same definitions serve the unit tests unchanged.
+ *
  * ---------------------------------------------------------------------------
  * One queue over two core types: the claim rule
  * ---------------------------------------------------------------------------
@@ -167,7 +172,7 @@ enum class WorkerStep : uint8_t {
  * device build can inline the dispatch.
  */
 template <typename Platform, typename Execute>
-WorkerStep worker_step(
+__aicore__ WorkerStep worker_step(
     Platform &plat,
     TOPO_GM QueueHead *head,
     TOPO_GM RunControl *control,
@@ -281,7 +286,7 @@ WorkerStep worker_step(
  * for the whole run, which is the cost a5's resident scheduler batches away.
  */
 template <typename Platform, typename Execute>
-uint32_t worker_loop(
+__aicore__ uint32_t worker_loop(
     Platform &plat,
     TOPO_GM QueueHead *head,
     TOPO_GM RunControl *control,
