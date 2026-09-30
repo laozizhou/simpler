@@ -65,9 +65,18 @@ using namespace simpler::topo_queue;
 // spin with a watchdog is the sanctioned shape. Ten seconds mirrors the
 // device-side WAIT_TIMEOUT_SECONDS.
 constexpr uint64_t HANDSHAKE_TIMEOUT_CYCLES = PLATFORM_PROF_SYS_CNT_FREQ * 10;
-// The whole graph must drain within this budget; sized generously because it
-// scales with the workload, unlike the handshake.
-constexpr uint64_t COMPLETION_TIMEOUT_CYCLES = PLATFORM_PROF_SYS_CNT_FREQ * 60;
+// The whole graph must drain within this budget.
+//
+// It has to stay under the OS op-execute timeout, which is 45 s by default:
+// that one kills aicpu-sd outright, so a budget above it means the run is
+// always reaped before this one can report anything and every stall looks
+// identical from the host. The margin also covers the AICore-side
+// WAIT_TIMEOUT_SECONDS, which latches an error this loop reports instead.
+//
+// The budget does scale with the workload, unlike the handshake, so a graph
+// whose honest runtime approaches this needs a per-run knob rather than a
+// larger constant -- raising it past 45 s only removes the diagnostic.
+constexpr uint64_t COMPLETION_TIMEOUT_CYCLES = PLATFORM_PROF_SYS_CNT_FREQ * 30;
 
 // Leader election. The launcher serializes runs, so "owner" is per-run state:
 // the first thread to swap nullptr -> runtime leads; everyone else follows and
@@ -216,9 +225,16 @@ int32_t wait_completion(TopoImageHeader *image) {
         }
         if (control->retired == task_count) return 0;
         if (scheduler_watchdog_expired(wait_start, get_sys_cnt_aicpu(), COMPLETION_TIMEOUT_CYCLES)) {
+            // The head separates a queue nobody finished draining from one that
+            // drained while a claimed task never retired: head == task_count
+            // means every index was claimed, so the missing retirements are
+            // owned by cores that entered a task and did not leave it.
+            QueueHead *head = const_cast<QueueHead *>(view.queue_head);
+            cache_invalidate_range(head, sizeof(QueueHead));
             LOG_ERROR(
-                "topo_queue: completion timeout, retired=%u of %u", static_cast<uint32_t>(control->retired),
-                static_cast<uint32_t>(task_count)
+                "topo_queue: completion timeout, retired=%u of %u, head=%u",
+                static_cast<uint32_t>(control->retired), static_cast<uint32_t>(task_count),
+                static_cast<uint32_t>(head->next)
             );
             return -1;
         }

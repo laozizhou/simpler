@@ -135,8 +135,12 @@ header(128B, 偏移表+magic+version) → order[] → fanin CSR → entries[](id
 | --- | --- | --- | --- |
 | 1 | **`__gm__` 地址空间链**：ccec 把地址空间和执行位置都编进类型，sim 下两者皆为空宏所以编得过 | **编译必败** | **已还**。`TOPO_GM` 穿透 worker loop 与 platform policy；lambda 的 `operator()` 是 host 函数且不接受注解，改为带 `__aicore__ operator()` 的 `TaskRunner`；两个 loop 模板加 `__aicore__`。宏在 host 构建为空，单测不受影响 |
 | 2 | **GM 分配接缝**：真机上 AICPU 堆 ≠ AICore 可见 GM | 编译能过、**首跑必错**（核读到垃圾） | **已改，真机未验**。`topo_image_allocate()` 改用平台的 `aicpu_device_malloc()`（onboard 经 halMemAlloc 拿 HBM 设备虚址，sim 仍是 malloc），自行向上取整到 cache line 并保留原始指针供 free。该 API 此前全仓库无调用者，halMemAlloc 路径尚未被任何运行验证；若失败，退路是复用 HBG 的 `scheduler_state_base_address`（topo_queue 不用它）。**约束仍在：payload 里有 materialize 写入的绝对自指针，image 必须在最终 GM 地址上原地填充——先分配后填充，绝不能填好再 memcpy** |
-| 3 | 内存序 | 只有硅片能审 | 见阶梯 3 |
-| — | 小项：`COMPLETION_TIMEOUT=60s` 按图大小调；双架构 UT 门不拦运行、只拦 `tests/ut/cpp` 的 cmake | | aicpu 的 aarch64 交叉编译已验证通过 |
+| 3 | 内存序 | 只有硅片能审 | **未还**。阶梯 3 首跑 50 轮，第 19 轮挂死（前 18 轮过，约 5% 复现率）。尚未定性：AICore 侧 10s 的 `WAIT_TIMEOUT` 在 45s 内没有触发，所以**卡的不是"核在等前驱"**；嫌疑落在异类型队头空转（FOREIGN_HEAD 故意无 deadline）、`execute()` 里 kernel 未返回、或退出握手 |
+| — | 小项：双架构 UT 门不拦运行、只拦 `tests/ut/cpp` 的 cmake | | aicpu 的 aarch64 交叉编译已验证通过；`COMPLETION_TIMEOUT` 已降至 30s，见下 |
+
+**超时预算必须低于 OS 的 45s。** op-execute 看门狗（`HandleTaskTimeout`）到点直接杀 aicpu-sd，所以任何高于它的自家超时都等不到机会——首跑那次 `COMPLETION_TIMEOUT=60s`，结果 45s 被杀，一行自家诊断都没留下，主机侧只看到 507047/507901。`COMPLETION_TIMEOUT_CYCLES` 现为 30s，并在超时行里带上 `head=`。真正需要更长预算的图要走每 run 的 knob，把常量调大只会重新失去诊断。
+
+**一次挂死的代价约 6 分钟。** 失败会污染卡，host 随后 `aclrtResetDeviceForce` 强制复位（独占持锁下安全，见 [env-macro-gating.md](../../.claude/rules/env-macro-gating.md)），复位本身约 5 分钟。`--max-time` 要留够，否则队列会在复位中途砍掉任务。
 
 ### 阶梯（每级一条命令一个判据）
 
@@ -166,6 +170,8 @@ task-submit --timeout 7200 --max-time 7200 --device auto --device-num 1 \
 | 核读到 image 全是垃圾 / 立刻乱 | 欠账 2：malloc 不是 GM |
 | 结果偶发错、counter 已 DONE 但数据旧 | 发布序：DONE 前的整 DCache 写回缺失/失效 |
 | 随机挂死在等前驱（超时报 TOPO_ERR_WAIT_TIMEOUT=3） | 消费序或读前 invalidate；也可能真是前驱核死了 |
+| 挂死但 `WAIT_TIMEOUT` 未触发，超时行给出 `head=`/`retired=` | `head<N`：队头持有者卡住或认领环节；`head==N` 而 `retired<N`：kernel 未返回或 counter 未发布；两者都等于 N：退出握手 |
+| 只有 `HandleTaskTimeout`、无任何自家诊断 | **不是已证实的死锁**（[running-onboard.md](../../.claude/rules/running-onboard.md) 的判据），是超时预算高于 45s 或诊断没打出来 |
 | 全体核不开工 | 握手：epoch 验收 / 窗口未开 / image 地址未 flush |
 | TOPO_ERR_BAD_IMAGE=6 | aicpu 与 aicore 二进制版本错配（payload_stride 校验拦下的） |
 
