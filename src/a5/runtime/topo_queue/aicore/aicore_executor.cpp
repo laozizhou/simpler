@@ -108,8 +108,27 @@ execute_task(const TopoImageView &image, TOPO_GM const TaskEntry &entry) {
  */
 struct TaskRunner {
     const TopoImageView &image;
+    DevicePlatform &plat;
+    uint32_t core_id;
+    uint32_t core_type;
 
-    __aicore__ bool operator()(TOPO_GM const TaskEntry &entry) const { return execute_task(image, entry); }
+    /*
+     * The worker loop calls this once its predecessor wait has finished, so the
+     * entry stamp closes that wait and the exit stamp closes the kernel. The
+     * claim stamp comes from the policy that won the CAS. All three are written
+     * once, by the one core that owns this task.
+     */
+    __aicore__ bool operator()(TOPO_GM const TaskEntry &entry) const {
+        const uint64_t ready = get_sys_cnt_aicore();
+        const bool ok = execute_task(image, entry);
+        TOPO_GM TaskTrace *trace = &image.traces[entry.task_id];
+        trace->claim_cycles = plat.claim_cycles;
+        trace->ready_cycles = ready;
+        trace->done_cycles = get_sys_cnt_aicore();
+        trace->core_id = core_id;
+        trace->core_type = core_type;
+        return ok;
+    }
 };
 
 }  // namespace
@@ -220,7 +239,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     const uint32_t retired = worker_loop(
         plat, image.queue_head, image.run_control, image.order, image.header->task_count, self_core_type,
         image.counters, image.fanin_offsets, image.fanin_ids, image.entries,
-        TaskRunner{image}
+        TaskRunner{image, plat, static_cast<uint32_t>(get_physical_core_id()), self_core_type}
     );
 
     // Phase 4 -- publish this core's contribution in one add. Per-task increments

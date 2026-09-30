@@ -242,6 +242,65 @@ int32_t wait_completion(TopoImageHeader *image) {
     }
 }
 
+/*
+ * Account for the run out of the per-task traces the cores left behind.
+ *
+ * The four numbers answer where a run's device time went. `span` is the wall
+ * the whole graph took; multiplied by the cores that took part it is the
+ * core-time the run had to spend. `wait` and `exec` are what the tasks used of
+ * it, and whatever is left is time a core held no task -- parked at a head of
+ * the other type, or between a completion and its next claim. A scheme whose
+ * cost is the queue rather than the work shows up as that remainder dominating.
+ */
+void report_traces(TopoImageHeader *image) {
+    TopoImageView view{};
+    topo_image_bind(image, view);
+    const uint32_t task_count = image->task_count;
+    if (task_count == 0) return;
+
+    TaskTrace *traces = const_cast<TaskTrace *>(view.traces);
+    cache_invalidate_range(traces, static_cast<uint64_t>(task_count) * sizeof(TaskTrace));
+
+    uint64_t first_claim = UINT64_MAX;
+    uint64_t last_done = 0;
+    uint64_t wait_cycles = 0;
+    uint64_t exec_cycles = 0;
+    uint64_t core_mask_lo = 0;
+    uint64_t core_mask_hi = 0;
+    for (uint32_t t = 0; t < task_count; ++t) {
+        const TaskTrace &trace = traces[t];
+        if (trace.done_cycles == 0) continue;  // never ran; a failed run leaves these
+        if (trace.claim_cycles < first_claim) first_claim = trace.claim_cycles;
+        if (trace.done_cycles > last_done) last_done = trace.done_cycles;
+        wait_cycles += trace.ready_cycles - trace.claim_cycles;
+        exec_cycles += trace.done_cycles - trace.ready_cycles;
+        if (trace.core_id < 64) {
+            core_mask_lo |= (1ULL << trace.core_id);
+        } else if (trace.core_id < 128) {
+            core_mask_hi |= (1ULL << (trace.core_id - 64));
+        }
+    }
+    if (first_claim == UINT64_MAX) return;
+
+    const uint64_t span_cycles = last_done - first_claim;
+    uint32_t cores = 0;
+    for (int b = 0; b < 64; ++b) {
+        cores += static_cast<uint32_t>((core_mask_lo >> b) & 1ULL);
+        cores += static_cast<uint32_t>((core_mask_hi >> b) & 1ULL);
+    }
+    const uint64_t freq_mhz = PLATFORM_PROF_SYS_CNT_FREQ / 1000000;
+    if (freq_mhz == 0 || cores == 0) return;
+    const uint64_t budget_cycles = span_cycles * cores;
+    const uint64_t busy_cycles = wait_cycles + exec_cycles;
+    const uint64_t idle_cycles = budget_cycles > busy_cycles ? budget_cycles - busy_cycles : 0;
+
+    LOG_TIMING(
+        "topo_queue trace: tasks=%u cores=%u span=%luus wait=%luus exec=%luus idle=%luus idle_pct=%lu",
+        task_count, cores, span_cycles / freq_mhz, wait_cycles / freq_mhz, exec_cycles / freq_mhz,
+        idle_cycles / freq_mhz, budget_cycles == 0 ? 0UL : (idle_cycles * 100) / budget_cycles
+    );
+}
+
 int32_t leader_execute(Runtime *runtime) {
     const int32_t core_count = runtime->dev.worker_count;
     if (core_count <= 0 || core_count > TOPO_MAX_CORES) {
@@ -321,6 +380,7 @@ int32_t leader_execute(Runtime *runtime) {
 
     if (rc == 0) {
         LOG_INFO("topo_queue: run complete, %u tasks retired", image->task_count);
+        report_traces(image);
     }
     aicpu_device_free(allocation.base);
     return rc;

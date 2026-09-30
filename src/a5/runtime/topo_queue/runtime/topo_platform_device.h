@@ -56,9 +56,14 @@ inline constexpr uint64_t WAIT_TIMEOUT_SECONDS = 10;
 
 struct DevicePlatform {
     uint64_t timeout_cycles;
+    // When this core last won a claim. The worker loop hands the task straight
+    // to the Execute policy, so that policy can close the interval without the
+    // loop itself carrying a trace parameter -- which keeps the loop the same
+    // source the host unit tests drive.
+    uint64_t claim_cycles;
 
     explicit __aicore__ DevicePlatform(uint64_t sys_cnt_freq) :
-        timeout_cycles(sys_cnt_freq * WAIT_TIMEOUT_SECONDS) {}
+        timeout_cycles(sys_cnt_freq * WAIT_TIMEOUT_SECONDS), claim_cycles(0) {}
 
     /*
      * Peek the head index. Owes: nothing. ld_dev reads GM directly and a stale
@@ -81,7 +86,9 @@ struct DevicePlatform {
      * justified it. Winning means exclusive ownership of index `expected`.
      */
     __aicore__ bool try_claim_queue_head(TOPO_GM QueueHead *head, uint64_t expected) {
-        return topo_gm_compare_exchange(head->next, expected, expected + 1) == expected;
+        const bool won = topo_gm_compare_exchange(head->next, expected, expected + 1) == expected;
+        if (won) claim_cycles = get_sys_cnt_aicore();
+        return won;
     }
 
     /*

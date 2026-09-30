@@ -57,7 +57,7 @@
 namespace simpler::topo_queue {
 
 inline constexpr uint32_t TOPO_IMAGE_MAGIC = 0x54505149u;  // "TPQI"
-inline constexpr uint32_t TOPO_IMAGE_VERSION = 2;          // v2: per-task DispatchPayload region
+inline constexpr uint32_t TOPO_IMAGE_VERSION = 3;          // v3: per-task trace region
 
 /*
  * Offsets are from the header's own base and must each land on a
@@ -100,6 +100,7 @@ struct alignas(CACHE_LINE_BYTES) TopoImageHeader {
     uint32_t payloads_offset;
     uint32_t payload_stride;  // bytes per task; writer and reader both pin it to sizeof(DispatchPayload)
     uint32_t counters_offset;
+    uint32_t traces_offset;
     uint32_t run_control_offset;
 
     uint32_t total_bytes;
@@ -131,6 +132,7 @@ struct TopoImageView {
     TOPO_GM uint8_t *payloads;  // task_count x payload_stride; element type agreed outside this header
     uint32_t payload_stride;
     TOPO_GM TaskCounter *counters;
+    TOPO_GM TaskTrace *traces;
     TOPO_GM RunControl *run_control;
 };
 
@@ -153,6 +155,7 @@ inline __aicore__ void topo_image_bind(TOPO_GM TopoImageHeader *header, TopoImag
     out.payloads = detail::at<uint8_t>(header, header->payloads_offset);
     out.payload_stride = header->payload_stride;
     out.counters = detail::at<TaskCounter>(header, header->counters_offset);
+    out.traces = detail::at<TaskTrace>(header, header->traces_offset);
     out.run_control = detail::at<RunControl>(header, header->run_control_offset);
 }
 
@@ -228,7 +231,10 @@ inline uint32_t topo_image_layout(
     header.counters_offset = static_cast<uint32_t>(cursor);
     cursor += static_cast<uint64_t>(task_count) * sizeof(TaskCounter);
 
-    header.queue_head_offset = static_cast<uint32_t>(cursor);  // aligned: TaskCounter is a line
+    header.traces_offset = static_cast<uint32_t>(cursor);  // aligned: TaskCounter is a line
+    cursor += static_cast<uint64_t>(task_count) * sizeof(TaskTrace);
+
+    header.queue_head_offset = static_cast<uint32_t>(cursor);  // aligned: TaskTrace is a line
     cursor += sizeof(QueueHead);
 
     header.run_control_offset = static_cast<uint32_t>(cursor);
