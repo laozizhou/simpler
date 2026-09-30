@@ -39,11 +39,11 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
 
 #include "aicore_scheduler_state.h"
 #include "aicpu/cache_maintenance.h"
+#include "aicpu/device_malloc.h"
 #include "aicpu/device_run_result_base_aicpu.h"
 #include "aicpu/device_time.h"
 #include "aicpu/platform_regs.h"
@@ -84,19 +84,43 @@ struct CoreEndpoint {
 };
 
 /*
- * The GM allocation seam -- THE known sim-only decision in this file.
+ * The image's GM allocation, and the two pointers a caller needs to hold.
  *
- * Under sim every "GM" address is ordinary process memory, so an aligned malloc
- * is genuinely GM. On silicon an AICPU heap pointer is NOT device GM: this call
- * must become a driver GM allocation before topo_queue can run onboard, and
- * keeping the seam one function wide is what makes that a local change.
+ * `header` is where the image is built and what the cores are told; `base` is
+ * what the free takes. They differ because the platform allocator promises no
+ * particular alignment while every wire type in the image declares a whole
+ * cache line -- a counter that shared a line with its neighbour would lose a
+ * completion to the other core's writeback. The base is therefore rounded up
+ * inside an over-allocation, which leaves the original pointer as the only one
+ * the allocator will accept back.
  */
-TopoImageHeader *topo_image_allocate(uint32_t bytes) {
-    // aligned_alloc requires the size to be a multiple of the alignment.
-    const uint32_t rounded = (bytes + CACHE_LINE_BYTES - 1) / CACHE_LINE_BYTES * CACHE_LINE_BYTES;
-    void *memory = aligned_alloc(CACHE_LINE_BYTES, rounded);
-    if (memory != nullptr) std::memset(memory, 0, rounded);
-    return static_cast<TopoImageHeader *>(memory);
+struct TopoImageAllocation {
+    TopoImageHeader *header;  // nullptr when the allocation failed
+    void *base;
+};
+
+/*
+ * Reserve and zero the image.
+ *
+ * The memory comes from the platform's device allocator, not the AICPU heap:
+ * onboard, a heap pointer names AICPU-local memory that no AICore can read,
+ * while this returns a device virtual address the cores reach. The two agree
+ * only under simulation, where every address space is the same process.
+ *
+ * Zeroing is what establishes the mutable tail's initial state -- PENDING == 0,
+ * head == 0, error == TOPO_OK -- so the builder writes only the read-only
+ * region.
+ */
+TopoImageAllocation topo_image_allocate(uint32_t bytes) {
+    const size_t rounded = (static_cast<size_t>(bytes) + CACHE_LINE_BYTES - 1) / CACHE_LINE_BYTES * CACHE_LINE_BYTES;
+    void *base = aicpu_device_malloc(rounded + CACHE_LINE_BYTES - 1);
+    if (base == nullptr) return TopoImageAllocation{nullptr, nullptr};
+
+    const uintptr_t aligned =
+        (reinterpret_cast<uintptr_t>(base) + CACHE_LINE_BYTES - 1) / CACHE_LINE_BYTES * CACHE_LINE_BYTES;
+    void *memory = reinterpret_cast<void *>(aligned);
+    std::memset(memory, 0, rounded);
+    return TopoImageAllocation{static_cast<TopoImageHeader *>(memory), base};
 }
 
 /*
@@ -243,7 +267,9 @@ int32_t leader_execute(Runtime *runtime) {
 
     TopoImageHeader sizing{};
     const uint32_t image_bytes = topo_prepare_image_bytes(graph, sizing);
-    TopoImageHeader *image = image_bytes != 0 ? topo_image_allocate(image_bytes) : nullptr;
+    const TopoImageAllocation allocation =
+        image_bytes != 0 ? topo_image_allocate(image_bytes) : TopoImageAllocation{nullptr, nullptr};
+    TopoImageHeader *image = allocation.header;
     int64_t failed_task = -1;
     TopoPrepareResult prep = TOPO_PREPARE_BAD_GRAPH;
     const uint64_t *callable_addresses = reinterpret_cast<const uint64_t *>(bootstrap->callable_addresses_address);
@@ -264,7 +290,7 @@ int32_t leader_execute(Runtime *runtime) {
         );
         release_cores(endpoints, core_count, nullptr);
         signal_exit_and_teardown(endpoints, core_count);
-        free(image);
+        aicpu_device_free(allocation.base);
         return -1;
     }
 
@@ -280,7 +306,7 @@ int32_t leader_execute(Runtime *runtime) {
     if (rc == 0) {
         LOG_INFO("topo_queue: run complete, %u tasks retired", image->task_count);
     }
-    free(image);
+    aicpu_device_free(allocation.base);
     return rc;
 }
 

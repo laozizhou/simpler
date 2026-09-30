@@ -131,21 +131,21 @@ header(128B, 偏移表+magic+version) → order[] → fanin CSR → entries[](id
 
 ### 欠账清单（上机前后必还）
 
-| # | 欠账 | 性质 | 还法 |
+| # | 欠账 | 性质 | 状态 |
 | --- | --- | --- | --- |
-| 1 | **`__gm__` 地址空间链未打通**：`topo_worker.h`/`topo_platform_device.h` 的指针参数未加限定，ccec 下「`__gm__ T*` 传给 `T*`」是硬错误（sim 双方为空宏所以编过） | **编译必败**，装环境即暴露 | 带着 ccec 修最高效：报错即行号。修法机械：`TOPO_GM` 穿透，host 测试不受影响（宏为空） |
-| 2 | **GM 分配接缝**：`topo_image_allocate()`=aligned_alloc，真机上 AICPU 堆 ≠ AICore 可见 GM | 编译能过、**首跑必错**（核读到垃圾） | 候选：host 加小钩子多分配一块；或复用每 run 下发的 GM heap（若 AICPU 侧可达）。接缝已收敛为单函数。**修法约束：payload 里有 materialize 写入的绝对自指针（context 槽指向 payload 自身），image 必须在最终 GM 地址上原地填充——先分配后填充，绝不能填好再 memcpy** |
+| 1 | **`__gm__` 地址空间链**：ccec 把地址空间和执行位置都编进类型，sim 下两者皆为空宏所以编得过 | **编译必败** | **已还**。`TOPO_GM` 穿透 worker loop 与 platform policy；lambda 的 `operator()` 是 host 函数且不接受注解，改为带 `__aicore__ operator()` 的 `TaskRunner`；两个 loop 模板加 `__aicore__`。宏在 host 构建为空，单测不受影响 |
+| 2 | **GM 分配接缝**：真机上 AICPU 堆 ≠ AICore 可见 GM | 编译能过、**首跑必错**（核读到垃圾） | **已改，真机未验**。`topo_image_allocate()` 改用平台的 `aicpu_device_malloc()`（onboard 经 halMemAlloc 拿 HBM 设备虚址，sim 仍是 malloc），自行向上取整到 cache line 并保留原始指针供 free。该 API 此前全仓库无调用者，halMemAlloc 路径尚未被任何运行验证；若失败，退路是复用 HBG 的 `scheduler_state_base_address`（topo_queue 不用它）。**约束仍在：payload 里有 materialize 写入的绝对自指针，image 必须在最终 GM 地址上原地填充——先分配后填充，绝不能填好再 memcpy** |
 | 3 | 内存序 | 只有硅片能审 | 见阶梯 3 |
-| — | 小项：aicpu 的 aarch64 交叉编译未验（应可过）；`COMPLETION_TIMEOUT=60s` 按图大小调；双架构 UT 门不拦运行、只拦 `tests/ut/cpp` 的 cmake | | |
+| — | 小项：`COMPLETION_TIMEOUT=60s` 按图大小调；双架构 UT 门不拦运行、只拦 `tests/ut/cpp` 的 cmake | | aicpu 的 aarch64 交叉编译已验证通过 |
 
 ### 阶梯（每级一条命令一个判据）
 
 ```bash
-# 阶梯 1（不占卡，纯编译判决——欠账 1 与交叉编译在此一并暴露）
+# 阶梯 1（纯编译判决——欠账 1 与交叉编译在此一并暴露）
 command -v ccec && ls $ASCEND_HOME_PATH/tools/hcc/bin/aarch64-target-linux-gnu-g++
 mv src/a5/runtime/topo_queue/build_config.py.parked src/a5/runtime/topo_queue/build_config.py
-python -m pip install --no-build-isolation -e . 2>&1 | tee /tmp/onboard_build.log
-# 判据：错误清单归零。编译不碰 NPU，无需 task-submit。
+python -m pip install --no-build-isolation --config-settings=build.targets=build_package_a5 -e . 2>&1 | tee build/logs/onboard_build.log
+# 判据：错误清单归零。编译不碰 NPU，但共享机上仍走队列：task-submit --no-device --run "..."。
 
 # 阶梯 2（占卡 1 次，首跑裁决欠账 2）
 .claude/skills/onboard-arch-precheck/check.sh a5 || exit 1
