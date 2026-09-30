@@ -162,22 +162,22 @@ enum class WorkerStep : uint8_t {
 /*
  * Run one task if the head offers one of this core's type.
  *
- * `execute` is invoked as execute(const TaskEntry &) and returns true on
+ * `execute` is invoked as execute(TOPO_GM const TaskEntry &) and returns true on
  * success. It is a template parameter rather than a function pointer so the
  * device build can inline the dispatch.
  */
 template <typename Platform, typename Execute>
 WorkerStep worker_step(
     Platform &plat,
-    QueueHead *head,
-    RunControl *control,
-    const uint32_t *order,        // queue: order[i] is the task id at index i
+    TOPO_GM QueueHead *head,
+    TOPO_GM RunControl *control,
+    TOPO_GM const uint32_t *order,  // queue: order[i] is the task id at index i
     uint32_t task_count,
-    uint8_t self_core_type,       // CORE_TYPE_AIC or CORE_TYPE_AIV
-    TaskCounter *counters,        // counters[task_id]
-    const uint32_t *fanin_offsets,
-    const uint32_t *fanin_ids,
-    const TaskEntry *entries,     // entries[task_id]
+    uint8_t self_core_type,         // CORE_TYPE_AIC or CORE_TYPE_AIV
+    TOPO_GM TaskCounter *counters,  // counters[task_id]
+    TOPO_GM const uint32_t *fanin_offsets,
+    TOPO_GM const uint32_t *fanin_ids,
+    TOPO_GM const TaskEntry *entries,  // entries[task_id]
     Execute &&execute
 ) {
     // Checked every pass, including foreign-head idle passes: the error latch
@@ -189,7 +189,7 @@ WorkerStep worker_step(
     if (index >= task_count) return WorkerStep::QUEUE_DRAINED;
 
     const uint32_t task_id = order[index];
-    const TaskEntry &entry = entries[task_id];
+    TOPO_GM const TaskEntry &entry = entries[task_id];
 
     if (entry.core_type != self_core_type) {
         // Not ours. Leave the head exactly where it is -- consuming it would
@@ -283,15 +283,15 @@ WorkerStep worker_step(
 template <typename Platform, typename Execute>
 uint32_t worker_loop(
     Platform &plat,
-    QueueHead *head,
-    RunControl *control,
-    const uint32_t *order,
+    TOPO_GM QueueHead *head,
+    TOPO_GM RunControl *control,
+    TOPO_GM const uint32_t *order,
     uint32_t task_count,
     uint8_t self_core_type,
-    TaskCounter *counters,
-    const uint32_t *fanin_offsets,
-    const uint32_t *fanin_ids,
-    const TaskEntry *entries,
+    TOPO_GM TaskCounter *counters,
+    TOPO_GM const uint32_t *fanin_offsets,
+    TOPO_GM const uint32_t *fanin_ids,
+    TOPO_GM const TaskEntry *entries,
     Execute &&execute
 ) {
     uint32_t retired = 0;

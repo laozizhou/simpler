@@ -35,6 +35,25 @@
 #include <cstdint>
 #include <type_traits>
 
+// Address-space qualifier for every pointer that names a byte of the image.
+// The AICore compiler makes it part of the type: a plain `T *` is Local Memory
+// there, so an unqualified parameter cannot receive a pointer into GM and the
+// call does not compile. It is empty on the AICPU and in host tests, where the
+// keyword does not exist, which is why the worker loop and its platform policy
+// are written in terms of this macro and compile unchanged for all three.
+#if defined(__CCE_AICORE__) || defined(__CPU_SIM)
+#define TOPO_GM __gm__
+#else
+#define TOPO_GM
+#endif
+
+// A host build has no CCE keywords. Defining them away lets the wire types, the
+// layout builder and the worker loop compile into a host test, which is what
+// keeps their invariants under test rather than only under the AICore compiler.
+#ifndef __aicore__
+#define __aicore__
+#endif
+
 namespace simpler::topo_queue {
 
 // One counter per task, each alone in its own cache line.

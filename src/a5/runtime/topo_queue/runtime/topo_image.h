@@ -54,20 +54,6 @@
 
 #include "topo_queue_types.h"
 
-#if defined(__CCE_AICORE__) || defined(__CPU_SIM)
-#define TOPO_GM __gm__
-#else
-#define TOPO_GM
-#endif
-
-// A host build has no CCE keywords. Defining them away lets the layout builder
-// and the accessors below compile into a host test, which is what keeps the
-// image's offsets and its size invariants under test rather than only under
-// the AICore compiler.
-#ifndef __aicore__
-#define __aicore__
-#endif
-
 namespace simpler::topo_queue {
 
 inline constexpr uint32_t TOPO_IMAGE_MAGIC = 0x54505149u;  // "TPQI"

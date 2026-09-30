@@ -68,7 +68,7 @@ namespace {
 static_assert(sizeof(DispatchPayload) % CACHE_LINE_BYTES == 0, "payload stride must be whole cache lines");
 
 __aicore__ __attribute__((always_inline)) bool
-execute_task(const TopoImageView &image, const TaskEntry &entry) {
+execute_task(const TopoImageView &image, TOPO_GM const TaskEntry &entry) {
     // The view is a local object holding __gm__ pointers -- it is not itself in
     // GM, so it is passed by an ordinary reference. Qualifying it __gm__ would
     // be an address-space error the sim build cannot see, since __gm__ expands
@@ -205,7 +205,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     const uint32_t retired = worker_loop(
         plat, image.queue_head, image.run_control, image.order, image.header->task_count, self_core_type,
         image.counters, image.fanin_offsets, image.fanin_ids, image.entries,
-        [&](const TaskEntry &entry) { return execute_task(image, entry); }
+        [&] __aicore__(TOPO_GM const TaskEntry &entry) { return execute_task(image, entry); }
     );
 
     // Phase 4 -- publish this core's contribution in one add. Per-task increments

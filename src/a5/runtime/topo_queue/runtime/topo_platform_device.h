@@ -67,9 +67,9 @@ struct DevicePlatform {
      * so an idling core cannot spin forever on a copy it cached before the last
      * claim moved the head.
      */
-    __aicore__ uint64_t load_queue_head(const QueueHead *head) {
-        topo_observe_cache_line(const_cast<QueueHead *>(head));
-        return topo_gm_query(const_cast<QueueHead *>(head)->next);
+    __aicore__ uint64_t load_queue_head(TOPO_GM const QueueHead *head) {
+        topo_observe_cache_line(const_cast<TOPO_GM QueueHead *>(head));
+        return topo_gm_query(const_cast<TOPO_GM QueueHead *>(head)->next);
     }
 
     /*
@@ -80,7 +80,7 @@ struct DevicePlatform {
      * Owes: atomicity, and acq_rel so a won claim orders after every peek that
      * justified it. Winning means exclusive ownership of index `expected`.
      */
-    __aicore__ bool try_claim_queue_head(QueueHead *head, uint64_t expected) {
+    __aicore__ bool try_claim_queue_head(TOPO_GM QueueHead *head, uint64_t expected) {
         return topo_gm_compare_exchange(head->next, expected, expected + 1) == expected;
     }
 
@@ -99,9 +99,9 @@ struct DevicePlatform {
      * the scalar DCache but the line may still be held stale, so the line is
      * invalidated before it is read.
      */
-    __aicore__ uint64_t load_counter_acquire(const TaskCounter *counter) {
-        topo_observe_cache_line(const_cast<TaskCounter *>(counter));
-        const uint64_t state = topo_gm_query(const_cast<TaskCounter *>(counter)->state);
+    __aicore__ uint64_t load_counter_acquire(TOPO_GM const TaskCounter *counter) {
+        topo_observe_cache_line(const_cast<TOPO_GM TaskCounter *>(counter));
+        const uint64_t state = topo_gm_query(const_cast<TOPO_GM TaskCounter *>(counter)->state);
         if (state != TASK_PENDING) {
             // Terminal state observed: order every later load after this one,
             // so the task's outputs cannot be read from before it ran.
@@ -122,7 +122,7 @@ struct DevicePlatform {
      * topo_gm_store, so the counter cannot be reordered ahead of the
      * barrier below it either.
      */
-    __aicore__ void store_counter_release(TaskCounter *counter, uint64_t state) {
+    __aicore__ void store_counter_release(TOPO_GM TaskCounter *counter, uint64_t state) {
         // A real writeback, not just a barrier. The kernel's scalar GM stores
         // sit dirty in this core's data cache, while a consumer reads those same
         // addresses through ld_dev, which bypasses it -- so a barrier alone
@@ -156,9 +156,9 @@ struct DevicePlatform {
      * than every pass -- not to drop the invalidation, since bounded staleness
      * is the property worth keeping.
      */
-    __aicore__ uint64_t load_error_relaxed(const RunControl *control) {
-        topo_observe_cache_line(const_cast<RunControl *>(control));
-        return topo_gm_query(const_cast<RunControl *>(control)->error);
+    __aicore__ uint64_t load_error_relaxed(TOPO_GM const RunControl *control) {
+        topo_observe_cache_line(const_cast<TOPO_GM RunControl *>(control));
+        return topo_gm_query(const_cast<TOPO_GM RunControl *>(control)->error);
     }
 
     /*
@@ -166,7 +166,7 @@ struct DevicePlatform {
      * failure is the one that explains the run, and the ones that follow are
      * usually its consequences.
      */
-    __aicore__ void latch_error(RunControl *control, uint64_t code) {
+    __aicore__ void latch_error(TOPO_GM RunControl *control, uint64_t code) {
         topo_gm_compare_exchange(control->error, static_cast<uint64_t>(TOPO_OK), code);
     }
 
