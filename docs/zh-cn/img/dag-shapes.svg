@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="330" viewBox="0 0 920 330" font-family="system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="920" height="330" fill="#fbfaf8"/>
+<text x="18" y="24" font-size="14" font-weight="600" fill="#2a2d33">四种 DAG 形状的 device_wall（µs，30 轮修剪均值，越低越好）</text>
+<line x1="62" y1="266.0" x2="900" y2="266.0" stroke="#ddd9d2" stroke-width="1"/>
+<text x="54" y="269.5" font-size="10" fill="#6b7078" text-anchor="end">0</text>
+<line x1="62" y1="212.5" x2="900" y2="212.5" stroke="#ddd9d2" stroke-width="1"/>
+<text x="54" y="216.0" font-size="10" fill="#6b7078" text-anchor="end">4000</text>
+<line x1="62" y1="159.0" x2="900" y2="159.0" stroke="#ddd9d2" stroke-width="1"/>
+<text x="54" y="162.5" font-size="10" fill="#6b7078" text-anchor="end">8000</text>
+<line x1="62" y1="105.5" x2="900" y2="105.5" stroke="#ddd9d2" stroke-width="1"/>
+<text x="54" y="109.0" font-size="10" fill="#6b7078" text-anchor="end">12000</text>
+<line x1="62" y1="52.0" x2="900" y2="52.0" stroke="#ddd9d2" stroke-width="1"/>
+<text x="54" y="55.5" font-size="10" fill="#6b7078" text-anchor="end">16000</text>
+<rect x="89.2" y="178.8" width="41.9" height="87.2" fill="#2f6b4f" rx="1"/>
+<text x="110.2" y="173.8" font-size="9.5" fill="#2a2d33" text-anchor="middle">6518</text>
+<rect x="136.2" y="191.6" width="41.9" height="74.4" fill="#7a8089" rx="1"/>
+<text x="157.1" y="186.6" font-size="9.5" fill="#2a2d33" text-anchor="middle">5559</text>
+<rect x="183.1" y="197.1" width="41.9" height="68.9" fill="#a8402f" rx="1"/>
+<text x="204.0" y="192.1" font-size="9.5" fill="#2a2d33" text-anchor="middle">5155</text>
+<text x="166.8" y="283.0" font-size="11" fill="#2a2d33" text-anchor="middle">chain_1024</text>
+<text x="166.8" y="296.0" font-size="10" fill="#6b7078" text-anchor="middle">链，宽度 1</text>
+<rect x="298.7" y="164.4" width="41.9" height="101.6" fill="#2f6b4f" rx="1"/>
+<text x="319.7" y="159.4" font-size="9.5" fill="#2a2d33" text-anchor="middle">7600</text>
+<rect x="345.7" y="250.3" width="41.9" height="15.7" fill="#7a8089" rx="1"/>
+<text x="366.6" y="245.3" font-size="9.5" fill="#2a2d33" text-anchor="middle">1173</text>
+<rect x="392.6" y="204.9" width="41.9" height="61.1" fill="#a8402f" rx="1"/>
+<text x="413.5" y="199.9" font-size="9.5" fill="#2a2d33" text-anchor="middle">4572</text>
+<text x="376.2" y="283.0" font-size="11" fill="#2a2d33" text-anchor="middle">fanin32_1024</text>
+<text x="376.2" y="296.0" font-size="10" fill="#6b7078" text-anchor="middle">992×fanin 32</text>
+<rect x="508.2" y="255.3" width="41.9" height="10.7" fill="#2f6b4f" rx="1"/>
+<text x="529.2" y="250.3" font-size="9.5" fill="#2a2d33" text-anchor="middle">800</text>
+<rect x="555.2" y="246.8" width="41.9" height="19.2" fill="#7a8089" rx="1"/>
+<text x="576.1" y="241.8" font-size="9.5" fill="#2a2d33" text-anchor="middle">1438</text>
+<rect x="602.1" y="204.2" width="41.9" height="61.8" fill="#a8402f" rx="1"/>
+<text x="623.0" y="199.2" font-size="9.5" fill="#2a2d33" text-anchor="middle">4620</text>
+<text x="585.8" y="283.0" font-size="11" fill="#2a2d33" text-anchor="middle">random_1024</text>
+<text x="585.8" y="296.0" font-size="10" fill="#6b7078" text-anchor="middle">随机依赖</text>
+<rect x="717.7" y="257.2" width="41.9" height="8.8" fill="#2f6b4f" rx="1"/>
+<text x="738.7" y="252.2" font-size="9.5" fill="#2a2d33" text-anchor="middle">657</text>
+<rect x="764.7" y="214.9" width="41.9" height="51.1" fill="#7a8089" rx="1"/>
+<text x="785.6" y="209.9" font-size="9.5" fill="#2a2d33" text-anchor="middle">3822</text>
+<rect x="811.6" y="59.6" width="41.9" height="206.4" fill="#a8402f" rx="1"/>
+<text x="832.5" y="54.6" font-size="9.5" fill="#2a2d33" text-anchor="middle">15432</text>
+<text x="795.2" y="283.0" font-size="11" fill="#2a2d33" text-anchor="middle">multi_root_4096</text>
+<text x="795.2" y="296.0" font-size="10" fill="#6b7078" text-anchor="middle">完全无依赖</text>
+<rect x="62" y="310" width="12" height="9" fill="#2f6b4f" rx="1"/><text x="79" y="318" font-size="10.5" fill="#6b7078">HBG resident</text>
+<rect x="202" y="310" width="12" height="9" fill="#7a8089" rx="1"/><text x="219" y="318" font-size="10.5" fill="#6b7078">HBG legacy</text>
+<rect x="342" y="310" width="12" height="9" fill="#a8402f" rx="1"/><text x="359" y="318" font-size="10.5" fill="#6b7078">topo_queue</text>
+</svg>
