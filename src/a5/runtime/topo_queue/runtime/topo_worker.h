@@ -114,17 +114,6 @@
 namespace simpler::topo_queue {
 
 /*
- * Spin budget for a core parked at a head of the other type, doubling from the
- * minimum to the maximum while it stays parked. The bound matters more than the
- * values: an unbounded backoff would delay a claim after the head finally turns,
- * and no backoff at all leaves every idle core re-reading the one line the
- * claiming cores are contending for. a5's resident scheduler backs its idle poll
- * off over the same kind of range.
- */
-inline constexpr uint32_t IDLE_BACKOFF_MIN_SPINS = 8;
-inline constexpr uint32_t IDLE_BACKOFF_MAX_SPINS = 256;
-
-/*
  * What a worker reports back for one loop iteration. The caller drives the loop,
  * so the policy stays free of control flow.
  */
@@ -311,7 +300,6 @@ __aicore__ uint32_t worker_loop(
     Execute &&execute
 ) {
     uint32_t retired = 0;
-    uint32_t idle_spins = IDLE_BACKOFF_MIN_SPINS;
     for (;;) {
         const WorkerStep step = worker_step(
             plat, head, control, order, task_count, self_core_type, counters, fanin_offsets, fanin_ids, entries,
@@ -319,24 +307,10 @@ __aicore__ uint32_t worker_loop(
         );
         if (step == WorkerStep::RAN_TASK) {
             ++retired;
-            idle_spins = IDLE_BACKOFF_MIN_SPINS;
             continue;
         }
-        if (step == WorkerStep::FOREIGN_HEAD) {
-            // A head of the other type will not become this core's by being
-            // watched, so re-peeking at full rate only spends the queue line's
-            // coherency traffic against the cores that are trying to claim it.
-            // The step already idled once; these are the rest of this pass's
-            // budget, which doubles while the head stays foreign and resets the
-            // moment this core runs something.
-            for (uint32_t i = 1; i < idle_spins; ++i) plat.spin_hint();
-            if (idle_spins < IDLE_BACKOFF_MAX_SPINS) idle_spins *= 2;
-            continue;
-        }
-        if (step == WorkerStep::LOST_CLAIM) {
-            // The head moved and the next index may be this core's, so this one
-            // re-peeks immediately and does not back off.
-            continue;
+        if (step == WorkerStep::FOREIGN_HEAD || step == WorkerStep::LOST_CLAIM) {
+            continue;  // the step already idled (foreign) or must re-peek now (lost)
         }
         return retired;  // QUEUE_DRAINED or ABORTED
     }
