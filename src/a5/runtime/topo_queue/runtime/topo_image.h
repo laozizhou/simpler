@@ -57,7 +57,7 @@
 namespace simpler::topo_queue {
 
 inline constexpr uint32_t TOPO_IMAGE_MAGIC = 0x54505149u;  // "TPQI"
-inline constexpr uint32_t TOPO_IMAGE_VERSION = 3;          // v3: per-task trace region
+inline constexpr uint32_t TOPO_IMAGE_VERSION = 3;          // v3: scheduler trace-cell base
 
 /*
  * Offsets are from the header's own base and must each land on a
@@ -100,11 +100,23 @@ struct alignas(CACHE_LINE_BYTES) TopoImageHeader {
     uint32_t payloads_offset;
     uint32_t payload_stride;  // bytes per task; writer and reader both pin it to sizeof(DispatchPayload)
     uint32_t counters_offset;
-    uint32_t traces_offset;
     uint32_t run_control_offset;
 
     uint32_t total_bytes;
     uint32_t reserved;
+
+    /*
+     * Absolute device address of this run's SchedulerTaskTrace array, or 0 when
+     * the run captures no swimlane.
+     *
+     * An address rather than an offset because the array is not in this image:
+     * it is the one HBG's host already reserves inside the resident scheduler
+     * state, sized by the same task count, and whose device address that host
+     * keeps so it can copy the cells back after the run. Writing the cells there
+     * is what lets the run's per-task timing reach chip_swimlane_records.json
+     * through the publication path HBG already owns.
+     */
+    uint64_t trace_cells_address;
 };
 
 static_assert(sizeof(TopoImageHeader) % 8 == 0, "header keeps the arrays that follow 8-byte aligned");
@@ -132,7 +144,6 @@ struct TopoImageView {
     TOPO_GM uint8_t *payloads;  // task_count x payload_stride; element type agreed outside this header
     uint32_t payload_stride;
     TOPO_GM TaskCounter *counters;
-    TOPO_GM TaskTrace *traces;
     TOPO_GM RunControl *run_control;
 };
 
@@ -155,7 +166,6 @@ inline __aicore__ void topo_image_bind(TOPO_GM TopoImageHeader *header, TopoImag
     out.payloads = detail::at<uint8_t>(header, header->payloads_offset);
     out.payload_stride = header->payload_stride;
     out.counters = detail::at<TaskCounter>(header, header->counters_offset);
-    out.traces = detail::at<TaskTrace>(header, header->traces_offset);
     out.run_control = detail::at<RunControl>(header, header->run_control_offset);
 }
 
@@ -205,6 +215,7 @@ inline uint32_t topo_image_layout(
     header.edge_count = edge_count;
     header.payload_stride = payload_stride;
     header.reserved = 0;
+    header.trace_cells_address = 0;
 
     uint64_t cursor = align_up(sizeof(TopoImageHeader), 8u);
 
@@ -231,10 +242,7 @@ inline uint32_t topo_image_layout(
     header.counters_offset = static_cast<uint32_t>(cursor);
     cursor += static_cast<uint64_t>(task_count) * sizeof(TaskCounter);
 
-    header.traces_offset = static_cast<uint32_t>(cursor);  // aligned: TaskCounter is a line
-    cursor += static_cast<uint64_t>(task_count) * sizeof(TaskTrace);
-
-    header.queue_head_offset = static_cast<uint32_t>(cursor);  // aligned: TaskTrace is a line
+    header.queue_head_offset = static_cast<uint32_t>(cursor);  // aligned: TaskCounter is a line
     cursor += sizeof(QueueHead);
 
     header.run_control_offset = static_cast<uint32_t>(cursor);

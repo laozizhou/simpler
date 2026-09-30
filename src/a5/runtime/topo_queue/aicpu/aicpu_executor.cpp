@@ -51,6 +51,7 @@
 #include "common/unified_log.h"
 #include "dispatch_payload.h"
 #include "runtime.h"
+#include "scheduler/scheduler_types.h"
 #include "scheduler/scheduler_watchdog.h"
 #include "spin_hint.h"
 #include "topo_image.h"
@@ -253,13 +254,11 @@ int32_t wait_completion(TopoImageHeader *image) {
  * cost is the queue rather than the work shows up as that remainder dominating.
  */
 void report_traces(TopoImageHeader *image) {
-    TopoImageView view{};
-    topo_image_bind(image, view);
     const uint32_t task_count = image->task_count;
-    if (task_count == 0) return;
+    if (task_count == 0 || image->trace_cells_address == 0) return;
 
-    TaskTrace *traces = const_cast<TaskTrace *>(view.traces);
-    cache_invalidate_range(traces, static_cast<uint64_t>(task_count) * sizeof(TaskTrace));
+    SchedulerTaskTrace *traces = reinterpret_cast<SchedulerTaskTrace *>(image->trace_cells_address);
+    cache_invalidate_range(traces, static_cast<uint64_t>(task_count) * sizeof(SchedulerTaskTrace));
 
     uint64_t first_claim = UINT64_MAX;
     uint64_t last_done = 0;
@@ -268,16 +267,16 @@ void report_traces(TopoImageHeader *image) {
     uint64_t core_mask_lo = 0;
     uint64_t core_mask_hi = 0;
     for (uint32_t t = 0; t < task_count; ++t) {
-        const TaskTrace &trace = traces[t];
-        if (trace.done_cycles == 0) continue;  // never ran; a failed run leaves these
-        if (trace.claim_cycles < first_claim) first_claim = trace.claim_cycles;
-        if (trace.done_cycles > last_done) last_done = trace.done_cycles;
-        wait_cycles += trace.ready_cycles - trace.claim_cycles;
-        exec_cycles += trace.done_cycles - trace.ready_cycles;
-        if (trace.core_id < 64) {
-            core_mask_lo |= (1ULL << trace.core_id);
-        } else if (trace.core_id < 128) {
-            core_mask_hi |= (1ULL << (trace.core_id - 64));
+        const SchedulerTaskTrace &trace = traces[t];
+        if (trace.valid == 0) continue;  // never ran; a failed run leaves these
+        if (trace.dispatch_end_cycles < first_claim) first_claim = trace.dispatch_end_cycles;
+        if (trace.kernel_end_cycles > last_done) last_done = trace.kernel_end_cycles;
+        wait_cycles += trace.kernel_start_cycles - trace.dispatch_end_cycles;
+        exec_cycles += trace.kernel_end_cycles - trace.kernel_start_cycles;
+        if (trace.worker_id < 64) {
+            core_mask_lo |= (1ULL << trace.worker_id);
+        } else if (trace.worker_id < 128) {
+            core_mask_hi |= (1ULL << (trace.worker_id - 64));
         }
     }
     if (first_claim == UINT64_MAX) return;
@@ -356,6 +355,13 @@ int32_t leader_execute(Runtime *runtime) {
     }
     if (image != nullptr) {
         *image = sizing;
+        // The resident scheduler state reserves one trace cell per task and its
+        // host keeps the device address, so pointing the cores at that array is
+        // all this runtime owes the swimlane. A run whose host reserved no
+        // scheduler state leaves the address 0 and the cores skip the stamps.
+        const uint64_t scheduler_state_base = bootstrap->scheduler_state_base_address;
+        image->trace_cells_address =
+            scheduler_state_base != 0 ? scheduler_state_base + bootstrap->trace_cells_offset : 0;
         prep = topo_prepare_fill(graph, callable_addresses, callable_count, image, &failed_task);
     }
     if (image == nullptr || prep != TOPO_PREPARE_OK) {

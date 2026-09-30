@@ -94,29 +94,6 @@ struct alignas(CACHE_LINE_BYTES) TaskCounter {
 static_assert(sizeof(TaskCounter) == CACHE_LINE_BYTES, "one counter per cache line");
 static_assert(alignof(TaskCounter) == CACHE_LINE_BYTES, "counters must not share a line");
 
-// What one task's execution cost, in AICore system-counter ticks.
-//
-// Three stamps rather than two durations, because the gaps between them are the
-// question: claim -> ready is the predecessor wait a core pays while holding a
-// core, and ready -> done is the kernel itself. What neither covers is the time
-// a core spends parked at a head of the other type, which is why the aggregate
-// also needs the run's own span: idle is what the span has left over once every
-// core's claim -> done is accounted for.
-//
-// A whole line per task for the same reason the counters take one: neighbouring
-// tasks are written by different cores, and an AICore writes back whole lines,
-// so two tasks sharing a line would trade clobbered stamps.
-struct alignas(CACHE_LINE_BYTES) TaskTrace {
-    uint64_t claim_cycles;  // the claim CAS won
-    uint64_t ready_cycles;  // every predecessor observed terminal
-    uint64_t done_cycles;   // the kernel returned
-    uint32_t core_id;       // physical core that ran it
-    uint32_t core_type;
-    uint8_t pad[CACHE_LINE_BYTES - 4 * sizeof(uint64_t)];
-};
-
-static_assert(sizeof(TaskTrace) == CACHE_LINE_BYTES, "one trace per cache line");
-
 // Compressed sparse row over the fanin edges.
 //
 // Written once by the AICPU before any worker starts and read-only afterwards,

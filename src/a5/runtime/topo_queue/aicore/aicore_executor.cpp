@@ -36,6 +36,7 @@
 #include "common/platform_config.h"
 #include "dispatch_payload.h"
 #include "runtime.h"
+#include "scheduler/scheduler_types.h"
 #include "topo_image.h"
 #include "topo_platform_device.h"
 #include "topo_queue_types.h"
@@ -110,23 +111,45 @@ struct TaskRunner {
     const TopoImageView &image;
     DevicePlatform &plat;
     uint32_t core_id;
-    uint32_t core_type;
 
     /*
      * The worker loop calls this once its predecessor wait has finished, so the
      * entry stamp closes that wait and the exit stamp closes the kernel. The
      * claim stamp comes from the policy that won the CAS. All three are written
      * once, by the one core that owns this task.
+     *
+     * They go into the resident scheduler's own trace cell for this task, in the
+     * fields HBG's host already reads back and publishes, so this runtime's
+     * timing reaches chip_swimlane_records.json through a path it does not have
+     * to build. The mapping is not arbitrary: `dispatch_end` is when the task
+     * became this core's, `kernel_start` is when it could actually run, and the
+     * gap between them is the predecessor wait the host reports as
+     * `receive_to_start`. `complete_start` equals `kernel_end` because nothing
+     * observes the completion afterwards -- the core publishes its own counter.
      */
     __aicore__ bool operator()(TOPO_GM const TaskEntry &entry) const {
         const uint64_t ready = get_sys_cnt_aicore();
         const bool ok = execute_task(image, entry);
-        TOPO_GM TaskTrace *trace = &image.traces[entry.task_id];
-        trace->claim_cycles = plat.claim_cycles;
-        trace->ready_cycles = ready;
-        trace->done_cycles = get_sys_cnt_aicore();
-        trace->core_id = core_id;
-        trace->core_type = core_type;
+        const uint64_t done = get_sys_cnt_aicore();
+
+        if (image.header->trace_cells_address == 0) return ok;
+        __gm__ SchedulerTaskTrace *trace =
+            reinterpret_cast<__gm__ SchedulerTaskTrace *>(image.header->trace_cells_address) + entry.task_id;
+        trace->task_id = entry.task_id;
+        trace->worker_id = core_id;
+        trace->dispatch_scheduler_worker_id = core_id;
+        trace->complete_scheduler_worker_id = core_id;
+        trace->dispatch_start_cycles = plat.claim_cycles;
+        trace->dispatch_end_cycles = plat.claim_cycles;
+        trace->ready_observe_cycles = plat.claim_cycles;
+        trace->kernel_start_cycles = ready;
+        trace->kernel_end_cycles = done;
+        trace->complete_start_cycles = done;
+        trace->complete_end_cycles = done;
+        // Published last: the host reads a cell only when this is non-zero, so
+        // every field above must already be in place.
+        OUT_OF_ORDER_STORE_BARRIER();
+        trace->valid = 1;
         return ok;
     }
 };
@@ -239,7 +262,7 @@ __aicore__ __attribute__((weak)) void aicore_execute(__gm__ Runtime *runtime, in
     const uint32_t retired = worker_loop(
         plat, image.queue_head, image.run_control, image.order, image.header->task_count, self_core_type,
         image.counters, image.fanin_offsets, image.fanin_ids, image.entries,
-        TaskRunner{image, plat, static_cast<uint32_t>(get_physical_core_id()), self_core_type}
+        TaskRunner{image, plat, static_cast<uint32_t>(get_physical_core_id())}
     );
 
     // Phase 4 -- publish this core's contribution in one add. Per-task increments
