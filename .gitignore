@@ -50,3 +50,5 @@ profiling_logs_*/
 _site/
 site/
 .site-theme/
+
+simpler/

@@ -610,6 +610,7 @@ C++ 单测能覆盖调度逻辑是因为**调度器源码是可移植 C++**：�
 | 主题 | 文档 |
 | --- | --- |
 | **调度器详解**（要改/写调度逻辑先读这个） | [zh-cn/schedulers.md](schedulers.md) |
+| 任务类型全景与用例统计 | [zh-cn/task_types.md](task_types.md) |
 | 文档总索引 | [docs/README.md](../README.md) |
 | 使用者入口 | [docs/user/](../user/README.md) |
 | L2 芯片架构 | [docs/chip-level-arch.md](../chip-level-arch.md) |
