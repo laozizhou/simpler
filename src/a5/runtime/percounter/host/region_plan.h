@@ -873,6 +873,7 @@ inline bool build_tables(
     // This run's uploaded image includes all completion and claim initial values.
     auto *completion = region_at<PercounterCompletionSector>(base, layout.completion_sectors_offset);
     for (uint64_t id = 0; id < layout.task_count; ++id) {
+        counters[id].publish_counter_id = id;
         const uint32_t blocks = metadata[id].block_num;
         const uint64_t total = PERCOUNTER_COUNTER_PUBLISHED - counters[id].value;
         for (uint32_t sector = 0; sector < PERCOUNTER_COMPLETION_SECTOR_COUNT; ++sector) {

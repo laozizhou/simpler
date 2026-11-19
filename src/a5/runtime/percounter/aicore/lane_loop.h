@@ -235,8 +235,17 @@ struct PercounterTask {
     __gm__ uint64_t *fanin;
     int64_t body_base;
     uint64_t arguments_address;
+    int64_t publish_counter;  // the counter id this task's completion adds to
     uint64_t function_address{0};
 };
+
+/**
+ * The counter id a task's completion adds to, for a caller holding only an
+ * order entry. Immutable once the image lands.
+ */
+inline __aicore__ int64_t percounter_publish_counter(const LaneConfig &cfg, int64_t task_id) {
+    return static_cast<int64_t>(percounter_gm_read(cfg.counters[task_id].publish_counter_id));
+}
 
 inline __aicore__ SchedulerGraphView percounter_task_graph(const PercounterTask &task) {
     return scheduler_ordinary_graph_view(
@@ -272,7 +281,8 @@ inline __aicore__ bool percounter_resolve(const LaneConfig &cfg, int64_t id, Per
             view.count,
             view.addresses,
             0,
-            reinterpret_cast<uint64_t>(cfg.arguments + id)
+            reinterpret_cast<uint64_t>(cfg.arguments + id),
+            percounter_publish_counter(cfg, id)
         };
         return true;
     }
@@ -294,6 +304,7 @@ inline __aicore__ bool percounter_resolve(const LaneConfig &cfg, int64_t id, Per
     task->sink = (flags & PERCOUNTER_BODY_SINK) != 0;
     task->body_base = id - static_cast<int64_t>(body_index);
     task->arguments_address = percounter_gm_read(line->arguments_address);
+    task->publish_counter = static_cast<int64_t>(percounter_gm_read(line->publish_counter_id));
     if ((flags & PERCOUNTER_BODY_ROOT) != 0) {
         const PercounterFaninView view = percounter_fanin_view(cfg, shell);
         task->body_fanin = false;
@@ -893,7 +904,8 @@ percounter_complete_mix(const LaneConfig &cfg, PercounterLaneState *state, const
     const int64_t id = percounter_order_task_id(c.entry);
     const uint64_t count = static_cast<uint64_t>(__builtin_popcount(c.mask));
     const uint64_t completion = percounter_completion_address(
-        cfg, id, percounter_order_block_idx(c.entry), percounter_order_block_num(c.entry)
+        cfg, percounter_publish_counter(cfg, id), percounter_order_block_idx(c.entry),
+        percounter_order_block_num(c.entry)
     );
     if (completion == 0) return false;
     if (static_cast<uint64_t>(id) < cfg.table_task_count) {
@@ -1455,8 +1467,8 @@ inline __aicore__ bool percounter_step(const LaneConfig &cfg, PercounterLaneStat
             // acquire. Its fanin still gates the ordinary completion edge.
             dsb((mem_dsb_t)0);  // Order the observed dependencies before relaying completion.
             const uint64_t completion = percounter_completion_address(
-                cfg, percounter_order_task_id(selected.entry), percounter_order_block_idx(selected.entry),
-                percounter_order_block_num(selected.entry)
+                cfg, percounter_publish_counter(cfg, percounter_order_task_id(selected.entry)),
+                percounter_order_block_idx(selected.entry), percounter_order_block_num(selected.entry)
             );
             if (completion == 0) return false;
             percounter_publish_completion(
@@ -1488,7 +1500,7 @@ inline __aicore__ bool percounter_step(const LaneConfig &cfg, PercounterLaneStat
         bool deferred = false;
         const int32_t block = percounter_order_block_idx(selected.entry);
         const int32_t blocks = percounter_order_block_num(selected.entry);
-        const uint64_t completion = percounter_completion_address(cfg, task->id, block, blocks);
+        const uint64_t completion = percounter_completion_address(cfg, task->publish_counter, block, blocks);
         const uint32_t role =
             selected.shared ? cfg.cluster_lane : (selected.mask == 0 ? 0 : __builtin_ctz(selected.mask));
         if (!percounter_run_task(cfg, state, *task, block, blocks, role, completion, &deferred, selected.entry))

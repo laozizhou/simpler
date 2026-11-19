@@ -137,7 +137,11 @@ struct alignas(128) PercounterCounter {
     uint32_t argument_counts;
     uint64_t function_addresses[PLATFORM_CORES_PER_BLOCKDIM];
     uint64_t arguments_address;
-    uint8_t reserved[48];
+    // The counter this task's completion publishes into. A task that owns its
+    // counter carries its own id. Several tasks share one id when their
+    // completions are indistinguishable to every consumer.
+    uint64_t publish_counter_id;
+    uint8_t reserved[40];
 };
 static_assert(sizeof(PercounterCounter) == 128, "a counter owns one GM sector");
 static_assert(std::is_trivially_copyable_v<PercounterCounter> && std::is_standard_layout_v<PercounterCounter>);
