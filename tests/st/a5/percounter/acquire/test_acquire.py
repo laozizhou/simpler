@@ -27,6 +27,7 @@ from tests.st.a5.host_build_graph.graph_predicated_dispatch.test_graph_predicate
 from tests.st.a5.host_build_graph.predicated_dispatch.test_predicated_dispatch import (
     TestPredicatedDispatchA5 as _Predicate,
 )
+from tests.st.a5.host_build_graph.multi_core_dag.test_multi_core_dag import TestHbgMultiCoreDag as _MultiCoreDag
 from tests.st.a5.host_build_graph.single_block_mix.test_single_block_mix import (
     TestSingleBlockMixHostBuildGraphA5 as _Mix,
 )
@@ -141,6 +142,16 @@ class TestPercounterGraphPredicate(SceneTestCase):
     ATOL = _GraphPredicate.ATOL
     generate_args = _GraphPredicate.generate_args
     compute_golden = _GraphPredicate.compute_golden
+
+
+@scene_test(level=2, runtime="percounter")
+class TestPercounterMultiCoreDag(SceneTestCase):
+    CALLABLE = deepcopy(_MultiCoreDag.CALLABLE)
+    CASES = deepcopy(_MultiCoreDag.CASES)
+    RTOL = _MultiCoreDag.RTOL
+    ATOL = _MultiCoreDag.ATOL
+    generate_args = _MultiCoreDag.generate_args
+    compute_golden = _MultiCoreDag.compute_golden
 
 
 if __name__ == "__main__":
