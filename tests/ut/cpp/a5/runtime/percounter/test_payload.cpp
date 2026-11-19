@@ -502,12 +502,15 @@ TEST(PercounterAcquire, ProducersSharingOneConsumerSetShareOneCounter) {
     // One subtask each, so the shared counter waits for two.
     EXPECT_EQ(static_cast<int64_t>(f.counters[0].value), -1);
 
+    // One producer's completion does not release the consumer; both do.
     f.step(0);
     EXPECT_FALSE(percounter_counter_published(f.counters[0].value));
     f.drain();
-    f.expect_completed(0);
-    f.expect_completed(1);
+    EXPECT_TRUE(percounter_counter_published(f.counters[0].value));
     f.expect_completed(2);
+    // A member that publishes elsewhere leaves its own counter unpublished,
+    // so nothing reads a counter no completion walks up as ready.
+    EXPECT_FALSE(percounter_counter_published(f.counters[1].value));
 }
 
 TEST(PercounterAcquire, ProducersWithDifferentConsumerSetsKeepTheirCounters) {
