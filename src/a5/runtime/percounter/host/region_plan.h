@@ -23,6 +23,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <map>
+#include <utility>
 #include <vector>
 
 #include "dispatch_payload.h"
@@ -495,6 +497,40 @@ inline bool build_tables(
         return source.block_num > 1 && !source.inline_completed && !source.published_off_lane &&
                source.graph_invocation < 0;
     };
+    // Producers no consumer can tell apart share one counter: every member
+    // publishes into the lowest member id, and a consumer that listed any member
+    // lists that id instead. The key is the exact consumer set, so a consumer
+    // never gains a producer it was not already waiting on. Completion shape
+    // joins the key because one reference resolves one way for a whole group.
+    std::vector<uint32_t> publish_counter(static_cast<size_t>(task_count));
+    for (uint64_t id = 0; id < task_count; ++id)
+        publish_counter[static_cast<size_t>(id)] = static_cast<uint32_t>(id);
+    {
+        std::vector<std::vector<uint32_t>> consumers(static_cast<size_t>(task_count));
+        for (uint64_t id = 0; id < task_count; ++id) {
+            const TaskInput &task = tasks[id];
+            if (task.fanin_count <= 0 || task.fanin_ids == nullptr) continue;
+            for (int32_t e = 0; e < task.fanin_count; ++e) {
+                // An out-of-range or out-of-order producer fails in the walk below.
+                const int32_t producer = task.fanin_ids[e];
+                if (producer >= 0 && static_cast<uint64_t>(producer) < id)
+                    consumers[static_cast<size_t>(producer)].push_back(static_cast<uint32_t>(id));
+            }
+        }
+        std::map<std::pair<bool, std::vector<uint32_t>>, uint32_t> representative;
+        for (uint64_t id = 0; id < task_count; ++id) {
+            const TaskInput &task = tasks[id];
+            // Only a counter its own subtasks walk up can take another's adds.
+            if (task.inline_completed || task.published_off_lane || task.graph_invocation >= 0) continue;
+            auto &set = consumers[static_cast<size_t>(id)];
+            if (set.empty()) continue;
+            std::sort(set.begin(), set.end());
+            set.erase(std::unique(set.begin(), set.end()), set.end());
+            publish_counter[static_cast<size_t>(id)] =
+                representative.emplace(std::make_pair(partitioned(task), set), static_cast<uint32_t>(id))
+                    .first->second;
+        }
+    }
     // Entries, checked against the plan as the walk goes, so an overlong list
     // fails on the task that overran it.
     uint64_t entries[PERCOUNTER_LIST_COUNT] = {};
@@ -547,11 +583,18 @@ inline bool build_tables(
             const auto &source = tasks[producer];
             // The device row contains only dependencies that can block at run time.
             if (!source.inline_completed) {
-                auto &ref = fanin_addr[row_begin + row.count];
-                ref =
-                    device_base + layout.counters_offset + static_cast<uint64_t>(producer) * sizeof(PercounterCounter);
+                const uint64_t target = publish_counter[static_cast<size_t>(producer)];
+                uint64_t ref = device_base + layout.counters_offset + target * sizeof(PercounterCounter);
                 if (partitioned(source)) ref |= PERCOUNTER_COMPLETION_PARTITIONED;
-                ++row.count;
+                // Members of one group resolve to one reference, which the row
+                // carries once: a second copy would be a second poll of it.
+                bool listed = false;
+                for (int32_t prior = 0; prior < row.count && !listed; ++prior)
+                    listed = fanin_addr[row_begin + prior] == ref;
+                if (!listed) {
+                    fanin_addr[row_begin + row.count] = ref;
+                    ++row.count;
+                }
             }
             // Edge validation and sink discovery use the input DAG.
             consumed[static_cast<size_t>(producer)] = true;
@@ -872,17 +915,42 @@ inline bool build_tables(
     // These initial values depend on task shape, not on physical lane placement.
     // This run's uploaded image includes all completion and claim initial values.
     auto *completion = region_at<PercounterCompletionSector>(base, layout.completion_sectors_offset);
+    // What each task's own subtasks add, read before a merge folds members into
+    // one counter. A Graph body task owns its counter.
+    std::vector<uint64_t> own_total(static_cast<size_t>(layout.task_count));
     for (uint64_t id = 0; id < layout.task_count; ++id) {
-        counters[id].publish_counter_id = id;
+        counters[id].publish_counter_id = id < task_count ? publish_counter[static_cast<size_t>(id)] : id;
+        own_total[static_cast<size_t>(id)] = PERCOUNTER_COUNTER_PUBLISHED - counters[id].value;
+    }
+    // A counter, and each of its sectors, is preset against every member that
+    // publishes into it. Blocks spread over sectors by index, so a member
+    // contributes to a sector the subtasks of the blocks it lands there.
+    std::vector<uint64_t> group_total(static_cast<size_t>(layout.task_count), 0);
+    std::vector<uint64_t> sector_total(
+        static_cast<size_t>(layout.task_count) * PERCOUNTER_COMPLETION_SECTOR_COUNT, 0
+    );
+    for (uint64_t id = 0; id < layout.task_count; ++id) {
+        const size_t target = static_cast<size_t>(counters[id].publish_counter_id);
         const uint32_t blocks = metadata[id].block_num;
-        const uint64_t total = PERCOUNTER_COUNTER_PUBLISHED - counters[id].value;
+        const uint64_t total = own_total[static_cast<size_t>(id)];
+        group_total[target] += total;
         for (uint32_t sector = 0; sector < PERCOUNTER_COMPLETION_SECTOR_COUNT; ++sector) {
             const uint64_t assigned =
                 (blocks + PERCOUNTER_COMPLETION_SECTOR_COUNT - 1U - sector) / PERCOUNTER_COMPLETION_SECTOR_COUNT;
-            const uint64_t count = blocks > 1 ? assigned * (total / blocks) : total;
-            completion[id * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector].value =
-                percounter_counter_preset(static_cast<int64_t>(count));
+            sector_total[target * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector] +=
+                blocks > 1 ? assigned * (total / blocks) : total;
         }
+    }
+    for (uint64_t id = 0; id < layout.task_count; ++id) {
+        // A member that publishes elsewhere keeps the preset its own subtasks
+        // would have walked up, so a counter nothing adds to reads unpublished.
+        if (counters[id].publish_counter_id == id)
+            counters[id].value = percounter_counter_preset(static_cast<int64_t>(group_total[static_cast<size_t>(id)]));
+        for (uint32_t sector = 0; sector < PERCOUNTER_COMPLETION_SECTOR_COUNT; ++sector)
+            completion[id * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector].value =
+                percounter_counter_preset(static_cast<int64_t>(
+                    sector_total[static_cast<size_t>(id) * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector]
+                ));
     }
     auto *claims = region_at<PercounterTaskClaim>(base, layout.task_claims_offset);
     const uint64_t aic_boundaries = control->segment_count[0] - 1;
