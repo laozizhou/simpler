@@ -527,8 +527,7 @@ inline bool build_tables(
             std::sort(set.begin(), set.end());
             set.erase(std::unique(set.begin(), set.end()), set.end());
             publish_counter[static_cast<size_t>(id)] =
-                representative.emplace(std::make_pair(partitioned(task), set), static_cast<uint32_t>(id))
-                    .first->second;
+                representative.emplace(std::make_pair(partitioned(task), set), static_cast<uint32_t>(id)).first->second;
         }
     }
     // Entries, checked against the plan as the walk goes, so an overlong list
@@ -926,9 +925,7 @@ inline bool build_tables(
     // publishes into it. Blocks spread over sectors by index, so a member
     // contributes to a sector the subtasks of the blocks it lands there.
     std::vector<uint64_t> group_total(static_cast<size_t>(layout.task_count), 0);
-    std::vector<uint64_t> sector_total(
-        static_cast<size_t>(layout.task_count) * PERCOUNTER_COMPLETION_SECTOR_COUNT, 0
-    );
+    std::vector<uint64_t> sector_total(static_cast<size_t>(layout.task_count) * PERCOUNTER_COMPLETION_SECTOR_COUNT, 0);
     for (uint64_t id = 0; id < layout.task_count; ++id) {
         const size_t target = static_cast<size_t>(counters[id].publish_counter_id);
         const uint32_t blocks = metadata[id].block_num;
@@ -947,10 +944,11 @@ inline bool build_tables(
         if (counters[id].publish_counter_id == id)
             counters[id].value = percounter_counter_preset(static_cast<int64_t>(group_total[static_cast<size_t>(id)]));
         for (uint32_t sector = 0; sector < PERCOUNTER_COMPLETION_SECTOR_COUNT; ++sector)
-            completion[id * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector].value =
-                percounter_counter_preset(static_cast<int64_t>(
+            completion[id * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector].value = percounter_counter_preset(
+                static_cast<int64_t>(
                     sector_total[static_cast<size_t>(id) * PERCOUNTER_COMPLETION_SECTOR_COUNT + sector]
-                ));
+                )
+            );
     }
     auto *claims = region_at<PercounterTaskClaim>(base, layout.task_claims_offset);
     const uint64_t aic_boundaries = control->segment_count[0] - 1;
