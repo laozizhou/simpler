@@ -487,6 +487,68 @@ TEST(PercounterAcquire, RuntimeFaninSkipsOnlyHostCompletedProducers) {
     f.expect_completed(3);
 }
 
+TEST(PercounterAcquire, ProducersSharingOneConsumerSetShareOneCounter) {
+    const int32_t producers[]{0, 1};
+    auto consumer = task(1);
+    consumer.fanin_ids = producers;
+    consumer.fanin_count = 2;
+    Fixture f({task(1), task(1), consumer});
+
+    EXPECT_EQ(f.counters[0].publish_counter_id, 0U);
+    EXPECT_EQ(f.counters[1].publish_counter_id, 0U);
+    const auto row = percounter_fanin_view(f.cfg[0], 2);
+    ASSERT_EQ(row.count, 1);
+    EXPECT_EQ(row.addresses[0], reinterpret_cast<uint64_t>(&f.counters[0].value));
+    // One subtask each, so the shared counter waits for two.
+    EXPECT_EQ(static_cast<int64_t>(f.counters[0].value), -1);
+
+    f.step(0);
+    EXPECT_FALSE(percounter_counter_published(f.counters[0].value));
+    f.drain();
+    f.expect_completed(0);
+    f.expect_completed(1);
+    f.expect_completed(2);
+}
+
+TEST(PercounterAcquire, ProducersWithDifferentConsumerSetsKeepTheirCounters) {
+    const int32_t both[]{0, 1};
+    const int32_t second_only[]{1};
+    auto shared_consumer = task(1);
+    shared_consumer.fanin_ids = both;
+    shared_consumer.fanin_count = 2;
+    auto private_consumer = task(1);
+    private_consumer.fanin_ids = second_only;
+    private_consumer.fanin_count = 1;
+    Fixture f({task(1), task(1), shared_consumer, private_consumer});
+
+    EXPECT_EQ(f.counters[1].publish_counter_id, 1U);
+    EXPECT_EQ(percounter_fanin_view(f.cfg[0], 2).count, 2);
+    EXPECT_EQ(static_cast<int64_t>(f.counters[0].value), 0);
+    f.drain();
+    f.expect_completed(3);
+}
+
+TEST(PercounterAcquire, MergedPartitionedProducersPresetEverySectorAgainstBothBlockSets) {
+    const int32_t producers[]{0, 1};
+    auto consumer = task(1);
+    consumer.fanin_ids = producers;
+    consumer.fanin_count = 2;
+    Fixture f({task(1, 4), task(1, 2), consumer});
+
+    EXPECT_EQ(f.counters[1].publish_counter_id, 0U);
+    const auto row = percounter_fanin_view(f.cfg[0], 2);
+    ASSERT_EQ(row.count, 1);
+    EXPECT_NE(row.addresses[0] & PERCOUNTER_COMPLETION_PARTITIONED, 0U);
+    // Blocks spread by index: the first producer lands one block on each
+    // sector, the second lands its two on sectors zero and one.
+    EXPECT_EQ(static_cast<int64_t>(f.component(0, 0)), -1);
+    EXPECT_EQ(static_cast<int64_t>(f.component(0, 1)), -1);
+    EXPECT_EQ(static_cast<int64_t>(f.component(0, 2)), 0);
+    EXPECT_EQ(static_cast<int64_t>(f.component(0, 3)), 0);
+    f.drain();
+    f.expect_completed(2);
+}
+
 TEST(PercounterAcquire, FaninCursorWaitsForEachProducerBeforePublishingReady) {
     for (const uint32_t mask : {1U, 6U, 7U}) {
         auto producer = task(1);
